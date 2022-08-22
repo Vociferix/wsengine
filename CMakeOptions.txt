@@ -44,6 +44,7 @@ else()
 	option(BUILD_fuzzshark     "Build fuzzshark" ON)
 endif()
 option(BUILD_mmdbresolve   "Build MaxMind DB resolver" ON)
+option(BUILD_wsengine "Build wsengine" ON)
 
 option(DISABLE_WERROR    "Do not treat warnings as errors" ON)
 option(DISABLE_DEBUG     "Disable debug code" OFF)

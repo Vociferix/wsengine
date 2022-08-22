@@ -2660,6 +2660,10 @@ if(BUILD_tshark)
 	install(TARGETS tshark RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
+if(BUILD_wsengine)
+    add_subdirectory(wsengine)
+endif()
+
 if(BUILD_tfshark)
 	set(tfshark_LIBS
 		m
