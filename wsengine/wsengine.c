@@ -233,6 +233,8 @@ int main(int argc, char *argv[]) {
       ret = wse_write_file(cr);
   } else if (strcmp(mode, WSE_MODE_DUMP_FILETYPES) == 0) {
       ret = wse_dump_filetypes(cr);
+  } else if (strcmp(mode, WSE_MODE_DUMP_ENCAPS) == 0) {
+      ret = wse_dump_encaps(cr);
   } else {
       fprintf(stderr, "wsengine: invalid mode \"%s\"\n", mode);
   }
