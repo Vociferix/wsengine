@@ -17,6 +17,7 @@
 #include <wsutil/json_dumper.h>
 #include <wsengine/read_cmd.h>
 
+#define WSE_MODE_DUMP_VERSION "dump-version"
 #define WSE_MODE_READ_FILE "read-file"
 #define WSE_MODE_WRITE_FILE "write-file"
 #define WSE_MODE_DUMP_FILETYPES "dump-filetypes"
@@ -50,6 +51,7 @@ wtap_block_t wse_get_packet_block(const frame_data *fd);
 int wse_set_modified_block(frame_data *fd, wtap_block_t new_block);
 const char *wse_version(void);
 
+int wse_dump_version(cmd_reader_t cr);
 int wse_read_file(cmd_reader_t cr);
 int wse_write_file(cmd_reader_t cr);
 int wse_dump_filetypes(cmd_reader_t cr);

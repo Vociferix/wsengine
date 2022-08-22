@@ -25,6 +25,7 @@ set(wsengine_FILES
     read_file.c
     write_file.c
     dump_filetypes.c
+    dump_version.c
     ${TSHARK_TAP_SRC}
 )
 

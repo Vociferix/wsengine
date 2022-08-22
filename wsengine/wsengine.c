@@ -225,7 +225,9 @@ int main(int argc, char *argv[]) {
       }
   }
 
-  if (strcmp(mode, WSE_MODE_READ_FILE) == 0) {
+  if (strcmp(mode, WSE_MODE_DUMP_VERSION) == 0) {
+      ret = wse_dump_version(cr);
+  } else if (strcmp(mode, WSE_MODE_READ_FILE) == 0) {
       ret = wse_read_file(cr);
   } else if (strcmp(mode, WSE_MODE_WRITE_FILE) == 0) {
       ret = wse_write_file(cr);
