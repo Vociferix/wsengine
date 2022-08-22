@@ -17,12 +17,6 @@
 #include <wsutil/json_dumper.h>
 #include <wsengine/read_cmd.h>
 
-#define WSE_MODE_DUMP_VERSION "dump-version"
-#define WSE_MODE_READ_FILE "read-file"
-#define WSE_MODE_WRITE_FILE "write-file"
-#define WSE_MODE_DUMP_FILETYPES "dump-filetypes"
-#define WSE_MODE_DUMP_ENCAPS "dump-encaps"
-
 #define WSE_DISSECT_FLAG_NULL       0x00u
 #define WSE_DISSECT_FLAG_BYTES      0x01u
 #define WSE_DISSECT_FLAG_COLUMNS    0x02u

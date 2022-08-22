@@ -69,12 +69,29 @@
 #define INIT_FAILED 1
 #define EPAN_INIT_FAIL 2
 
+typedef int (*wse_mode_func)(cmd_reader_t);
+
+typedef struct {
+    const char* name;
+    wse_mode_func func;
+} wse_mode_t;
+
 typedef void (*wse_dissect_func_t)(epan_dissect_t *edt, proto_tree *tree, struct epan_column_info *cinfo, const GSList *data_src, void *data);
 
 capture_file cfile;
 
 static guint32 cum_bytes;
 static frame_data ref_frame;
+
+static const wse_mode_t wse_modes[] = {
+    { "dump-version", wse_dump_version },
+    { "read-file", wse_read_file },
+    { "write-file", wse_write_file },
+    { "dump-filetypes", wse_dump_filetypes },
+    { "dump-encaps", wse_dump_encaps }
+};
+
+static const int num_wse_modes = sizeof(wse_modes) / sizeof(wse_mode_t);
 
 static void wse_cmdarg_err(const char *msg_format, va_list ap);
 static void wse_cmdarg_err_cont(const char *msg_format, va_list ap);
@@ -119,6 +136,7 @@ int main(int argc, char *argv[]) {
   cmd_reader_t         cr = NULL;
   cmd_obj_t            cmd;
   const char          *mode = NULL;
+  int                  mode_id;
   static const struct report_message_routines wse_report_routines = {
     failure_message,
     failure_message,
@@ -225,18 +243,15 @@ int main(int argc, char *argv[]) {
       }
   }
 
-  if (strcmp(mode, WSE_MODE_DUMP_VERSION) == 0) {
-      ret = wse_dump_version(cr);
-  } else if (strcmp(mode, WSE_MODE_READ_FILE) == 0) {
-      ret = wse_read_file(cr);
-  } else if (strcmp(mode, WSE_MODE_WRITE_FILE) == 0) {
-      ret = wse_write_file(cr);
-  } else if (strcmp(mode, WSE_MODE_DUMP_FILETYPES) == 0) {
-      ret = wse_dump_filetypes(cr);
-  } else if (strcmp(mode, WSE_MODE_DUMP_ENCAPS) == 0) {
-      ret = wse_dump_encaps(cr);
-  } else {
+  for (mode_id = 0; mode_id < num_wse_modes; ++mode_id) {
+      if (strcmp(mode, wse_modes[mode_id].name) == 0) {
+          ret = wse_modes[mode_id].func(cr);
+          break;
+      }
+  }
+  if (mode_id == num_wse_modes) {
       fprintf(stderr, "wsengine: invalid mode \"%s\"\n", mode);
+      ret = 1;
   }
 
 clean_exit:
