@@ -25,6 +25,9 @@ int wse_dump_filetypes(cmd_reader_t cr _U_) {
         dumper.output_file = stdout;
         json_dumper_begin_object(&dumper);
 
+        json_dumper_set_member_name(&dumper, "id");
+        json_dumper_value_anyf(&dumper, "%d", ft);
+
         json_dumper_set_member_name(&dumper, "name");
         json_dumper_value_string(&dumper, name);
 
