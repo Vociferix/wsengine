@@ -2,7 +2,14 @@
 
 #include <wiretap/wtap.h>
 
-static gboolean encode_idb(json_dumper* dumper, wtap_block_t idb);
+typedef struct iface_node_s iface_node_t;
+struct iface_node_s {
+    iface_node_t* next;
+    wtap_block_t iface;
+    int stats_count;
+};
+
+static gboolean encode_idb(json_dumper* dumper, wtap_block_t idb, iface_node_t** ifaces);
 static gboolean encode_record(json_dumper* dumper, wtap* wth, wtap_rec* rec, Buffer* buf);
 static gboolean encode_packet(json_dumper* dumper, wtap* wth, wtap_rec* rec, Buffer* buf);
 static gboolean encode_ft_specific(json_dumper* dumper, wtap* wth, wtap_rec* rec, Buffer* buf);
@@ -35,6 +42,7 @@ static gboolean encode_llcp_phdr(json_dumper* dumper, struct llcp_phdr* phdr);
 static gboolean encode_logcat_phdr(json_dumper* dumper, struct logcat_phdr* phdr);
 static gboolean encode_netmon_phdr(json_dumper* dumper, struct netmon_phdr* phdr);
 static gboolean encode_ber_phdr(json_dumper* dumper, struct ber_phdr* phdr);
+static gboolean encode_stats(json_dumper* dumper, iface_node_t* ifaces);
 
 int
 wse_read_file(cmd_reader_t cr) {
@@ -50,6 +58,8 @@ wse_read_file(cmd_reader_t cr) {
     int err = 0;
     json_dumper dumper;
     wtap_block_t idb;
+    iface_node_t* ifaces = NULL;
+    iface_node_t* tmp_iface;
 
     if (!read_cmd(cr, &cmd) ||
         !cmd_obj_get(&cmd, "file", &item)) {
@@ -106,7 +116,7 @@ wse_read_file(cmd_reader_t cr) {
             dumper.output_file = stdout;
             json_dumper_begin_object(&dumper);
             json_dumper_set_member_name(&dumper, "iface");
-            if (!encode_idb(&dumper, idb)) {
+            if (!encode_idb(&dumper, idb, &ifaces)) {
                 err = 1;
                 break;
             }
@@ -114,6 +124,11 @@ wse_read_file(cmd_reader_t cr) {
             json_dumper_finish(&dumper);
         }
         if (err != 0) break;
+
+        if (!encode_stats(&dumper, ifaces)) {
+            err = 1;
+            break;
+        }
 
         memset(&dumper, 0, sizeof(json_dumper));
         dumper.output_file = stdout;
@@ -132,13 +147,210 @@ wse_read_file(cmd_reader_t cr) {
     wtap_rec_cleanup(&rec);
     ws_buffer_free(&buf);
 
+    while (ifaces != NULL) {
+        wtap_block_unref(ifaces->iface);
+        tmp_iface = ifaces;
+        ifaces = ifaces->next;
+        g_free(tmp_iface);
+    }
+
     return err;
 }
 
 static gboolean
-encode_idb(json_dumper* dumper, wtap_block_t idb) {
+encode_custom_opt(json_dumper* dumper, guint option_id, custom_opt_t* option) {
+    gchar* str;
+    gboolean is_str;
+    json_dumper_set_member_name(dumper, "type");
+    if (option_id == OPT_CUSTOM_BIN_COPY || option_id == OPT_CUSTOM_BIN_NO_COPY) {
+        json_dumper_value_string(dumper, "bytes");
+        is_str = FALSE;
+    } else {
+        json_dumper_value_string(dumper, "string");
+        is_str = TRUE;
+    }
+
+    json_dumper_set_member_name(dumper, "copyable");
+    if (option_id == OPT_CUSTOM_BIN_COPY || OPT_CUSTOM_STR_COPY) {
+        json_dumper_value_anyf(dumper, "true");
+    } else {
+        json_dumper_value_anyf(dumper, "false");
+    }
+
+    json_dumper_set_member_name(dumper, "pen");
+    json_dumper_value_anyf(dumper, "%" G_GUINT32_FORMAT, option->pen);
+
+    json_dumper_set_member_name(dumper, "data");
+    if (is_str) {
+        str = g_strndup(option->data.generic_data.custom_data, option->data.generic_data.custom_data_len);
+        json_dumper_value_string(dumper, str);
+        g_free(str);
+    } else {
+        json_dumper_begin_base64(dumper);
+        json_dumper_write_base64(dumper, (const guint8*)option->data.generic_data.custom_data, option->data.generic_data.custom_data_len);
+        json_dumper_end_base64(dumper);
+    }
+
+    return TRUE;
+}
+
+static gboolean
+encode_custom_opts_helper(wtap_block_t block _U_, guint option_id, wtap_opttype_e option_type _U_, wtap_optval_t* option, void* user_data) {
+    switch (option_id) {
+        case OPT_CUSTOM_BIN_COPY:
+        case OPT_CUSTOM_STR_COPY:
+        case OPT_CUSTOM_BIN_NO_COPY:
+        case OPT_CUSTOM_STR_NO_COPY:
+            return encode_custom_opt((json_dumper*)user_data, option_id, &option->custom_opt);
+        default:
+            return TRUE;
+    }
+}
+
+static gboolean
+encode_custom_opts(json_dumper* dumper, wtap_block_t block) {
+    gboolean ret;
+    json_dumper_set_member_name(dumper, "custom_opts");
+    json_dumper_begin_array(dumper);
+    ret = wtap_block_foreach_option(block, encode_custom_opts_helper, dumper);
+    json_dumper_end_array(dumper);
+    return ret;
+}
+
+static gboolean
+encode_comment_opts(json_dumper* dumper, wtap_block_t block) {
+    gboolean ret = TRUE;
+    char* comment = NULL;
+    guint i, count;
+    json_dumper_set_member_name(dumper, "comments");
+    json_dumper_begin_array(dumper);
+    count = wtap_block_count_option(block, OPT_COMMENT);
+    for (i = 0; i < count; ++i) {
+        if (wtap_block_get_nth_string_option_value(block, OPT_COMMENT, i, &comment) != WTAP_OPTTYPE_SUCCESS) {
+            ret = FALSE;
+            break;
+        }
+        json_dumper_value_string(dumper, comment);
+    }
+    json_dumper_end_array(dumper);
+    return ret;
+}
+
+static gboolean
+encode_isb(json_dumper* dumper, wtap_block_t isb) {
+    gboolean ret;
+    guint64 u64_opt_val = 0;
+    wtapng_if_stats_mandatory_t* mandatory = (wtapng_if_stats_mandatory_t*)wtap_block_get_mandatory_data(isb);
+
+    memset(dumper, 0, sizeof(json_dumper));
+    dumper->output_file = stdout;
+    json_dumper_begin_object(dumper);
+
+    json_dumper_set_member_name(dumper, "iface_id");
+    json_dumper_value_anyf(dumper, "%" G_GUINT32_FORMAT, mandatory->interface_id);
+
+    json_dumper_set_member_name(dumper, "ts_high");
+    json_dumper_value_anyf(dumper, "%" G_GUINT32_FORMAT, mandatory->ts_high);
+
+    json_dumper_set_member_name(dumper, "ts_low");
+    json_dumper_value_anyf(dumper, "%" G_GUINT32_FORMAT, mandatory->ts_low);
+
+    json_dumper_set_member_name(dumper, "start_time");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_STARTTIME, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "end_time");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_ENDTIME, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "if_recv");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_IFRECV, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "if_drop");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_IFDROP, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "filter_accept");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_FILTERACCEPT, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "os_drop");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_OSDROP, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    json_dumper_set_member_name(dumper, "usr_deliv");
+    if (wtap_block_get_uint64_option_value(isb, OPT_ISB_USRDELIV, &u64_opt_val) == WTAP_OPTTYPE_SUCCESS) {
+        json_dumper_value_anyf(dumper, "%" G_GUINT64_FORMAT, u64_opt_val);
+    } else {
+        json_dumper_value_anyf(dumper, "null");
+    }
+
+    ret = encode_comment_opts(dumper, isb);
+
+    if (ret)
+        ret = encode_custom_opts(dumper, isb);
+
+    json_dumper_end_object(dumper);
+    json_dumper_finish(dumper);
+
+    return ret;
+}
+
+static gboolean
+encode_stats(json_dumper* dumper, iface_node_t* ifaces) {
+    wtapng_if_descr_mandatory_t* mandatory;
+
+    while (ifaces != NULL) {
+        mandatory = (wtapng_if_descr_mandatory_t*)wtap_block_get_mandatory_data(ifaces->iface);
+
+        while (mandatory->num_stat_entries > ifaces->stats_count) {
+            if (!encode_isb(dumper, g_array_index(mandatory->interface_statistics, wtap_block_t, ifaces->stats_count++))) {
+                return FALSE;
+            }
+        }
+
+        ifaces = ifaces->next;
+    }
+    return TRUE;
+}
+
+static gboolean
+encode_idb(json_dumper* dumper, wtap_block_t idb, iface_node_t** ifaces) {
+    gboolean ret;
+    iface_node_t* iflist = *ifaces;
     wtapng_if_descr_mandatory_t* mandatory = wtap_block_get_mandatory_data(idb);
     const char* encap_name = wtap_encap_name(mandatory->wtap_encap);
+
+    if (iflist == NULL) {
+        *ifaces = iflist = (iface_node_t*)g_malloc0(sizeof(iface_node_t));
+    } else {
+        while (iflist->next != NULL) {
+            iflist = iflist->next;
+        }
+        iflist->next = (iface_node_t*)g_malloc0(sizeof(iface_node_t));
+        iflist = iflist->next;
+    }
+    iflist->iface = idb;
+    wtap_block_ref(idb);
 
     json_dumper_begin_object(dumper);
     json_dumper_set_member_name(dumper, "encap");
@@ -182,12 +394,15 @@ encode_idb(json_dumper* dumper, wtap_block_t idb) {
     json_dumper_set_member_name(dumper, "snaplen");
     json_dumper_value_anyf(dumper, "%" G_GUINT32_FORMAT, mandatory->snap_len);
 
-    // TODO: mandatory->interface_statistics
-
     // TODO: IDB options
 
+    ret = encode_comment_opts(dumper, idb);
+
+    if (ret)
+        ret = encode_custom_opts(dumper, idb);
+
     json_dumper_end_object(dumper);
-    return TRUE;
+    return ret;
 }
 
 static gboolean
@@ -287,8 +502,17 @@ encode_record(json_dumper* dumper, wtap* wth, wtap_rec* rec, Buffer* buf) {
             break;
         default:
             fprintf(stderr, "wsengine: encountered invalid record\n");
-            ret = 1;
+            ret = FALSE;
             break;
+    }
+
+    if (ret && rec->block != NULL) {
+        // TODO: Packet block options
+
+        ret = encode_comment_opts(dumper, rec->block);
+
+        if (ret)
+            ret = encode_custom_opts(dumper, rec->block);
     }
 
     json_dumper_end_object(dumper);
