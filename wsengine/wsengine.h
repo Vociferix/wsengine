@@ -14,8 +14,8 @@
 
 #include <file.h>
 #include <wiretap/wtap_opttypes.h>
-#include <wsutil/json_dumper.h>
 #include <wsengine/read_cmd.h>
+#include <wsengine/dump_utils.h>
 
 #define WSE_DISSECT_FLAG_NULL       0x00u
 #define WSE_DISSECT_FLAG_BYTES      0x01u

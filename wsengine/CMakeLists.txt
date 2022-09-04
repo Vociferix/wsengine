@@ -22,6 +22,7 @@ set(wsengine_FILES
     wsengine-tap-register.c
     wsengine.c
     read_cmd.c
+    dump_utils.c
     read_file.c
     write_file.c
     dump_filetypes.c
