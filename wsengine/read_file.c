@@ -1,6 +1,7 @@
 #include <wsengine/wsengine.h>
 
 #include <wiretap/wtap.h>
+#include <wiretap/secrets-types.h>
 
 typedef struct iface_node_s iface_node_t;
 struct iface_node_s {
@@ -43,6 +44,9 @@ static gboolean encode_logcat_phdr(json_dumper* dumper, struct logcat_phdr* phdr
 static gboolean encode_netmon_phdr(json_dumper* dumper, struct netmon_phdr* phdr);
 static gboolean encode_ber_phdr(json_dumper* dumper, struct ber_phdr* phdr);
 static gboolean encode_stats(json_dumper* dumper, iface_node_t* ifaces);
+static void record_new_ipv4_name(const guint addr, const gchar* name);
+static void record_new_ipv6_name(const void* addrp, const gchar* name);
+static void record_new_secrets(guint32 secrets_type, const void* secrets, guint size);
 
 int
 wse_read_file(cmd_reader_t cr) {
@@ -105,6 +109,10 @@ wse_read_file(cmd_reader_t cr) {
         return 1;
     }
 
+    wtap_set_cb_new_ipv4(wth, record_new_ipv4_name);
+    wtap_set_cb_new_ipv6(wth, record_new_ipv6_name);
+    wtap_set_cb_new_secrets(wth, record_new_secrets);
+
     wtap_rec_init(&rec);
     ws_buffer_init(&buf, 1514);
 
@@ -155,6 +163,78 @@ wse_read_file(cmd_reader_t cr) {
     }
 
     return err;
+}
+
+static void
+record_new_ipv4_name(const guint addr, const gchar* name) {
+    ws_in4_addr address = (ws_in4_addr)addr;
+    json_dumper dumper;
+    memset(&dumper, 0, sizeof(json_dumper));
+    dumper.output_file = stdout;
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "ipv4_name");
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "address");
+    json_dumper_value_ipv4(&dumper, &address);
+    json_dumper_set_member_name(&dumper, "name");
+    json_dumper_value_string(&dumper, name);
+    json_dumper_end_object(&dumper);
+    json_dumper_end_object(&dumper);
+    json_dumper_finish(&dumper);
+}
+
+static void
+record_new_ipv6_name(const void* addrp, const gchar* name) {
+    const ws_in6_addr* address = (const ws_in6_addr*)addrp;
+    json_dumper dumper;
+    memset(&dumper, 0, sizeof(json_dumper));
+    dumper.output_file = stdout;
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "ipv6_name");
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "address");
+    json_dumper_value_ipv4(&dumper, address);
+    json_dumper_set_member_name(&dumper, "name");
+    json_dumper_value_string(&dumper, name);
+    json_dumper_end_object(&dumper);
+    json_dumper_end_object(&dumper);
+    json_dumper_finish(&dumper);
+}
+
+static void
+record_new_secrets(guint32 secrets_type, const void* secrets, guint size) {
+    const gchar* type_name;
+    json_dumper dumper;
+
+    switch (secrets_type) {
+        case SECRETS_TYPE_TLS:
+            type_name = "tls";
+            break;
+        case SECRETS_TYPE_WIREGUARD:
+            type_name = "wireguard";
+            break;
+        case SECRETS_TYPE_ZIGBEE_NWK_KEY:
+            type_name = "zigbee-nwk-key";
+            break;
+        case SECRETS_TYPE_ZIGBEE_APS_KEY:
+            type_name = "zigbee-aps-key";
+            break;
+        default:
+            return;
+    }
+
+    memset(&dumper, 0, sizeof(json_dumper));
+    dumper.output_file = stdout;
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "secrets");
+    json_dumper_begin_object(&dumper);
+    json_dumper_set_member_name(&dumper, "type");
+    json_dumper_value_string(&dumper, type_name);
+    json_dumper_set_member_name(&dumper, "secrets");
+    json_dumper_value_bytes(&dumper, (const guint8*)secrets, size);
+    json_dumper_end_object(&dumper);
+    json_dumper_end_object(&dumper);
+    json_dumper_finish(&dumper);
 }
 
 static gboolean
